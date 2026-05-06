@@ -4,19 +4,54 @@ import {
   SUPPORTED_DEPOSIT_ASSETS,
   isPlaceholderRpc,
 } from "@/lib/config";
+import {
+  PUBLIC_SOLANA_RPC_ENDPOINT,
+  isRpcAccessDenied,
+} from "@/lib/solana/rpc-errors";
 import type { PortfolioAsset, PortfolioSnapshot } from "@/lib/types";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
-export function getConnection() {
-  const endpoint = isPlaceholderRpc(QUICKNODE_RPC_URL)
-    ? "https://api.mainnet-beta.solana.com"
-    : QUICKNODE_RPC_URL;
-
+export function createSolanaConnection(endpoint: string) {
   return new Connection(endpoint, {
     commitment: "confirmed",
     confirmTransactionInitialTimeout: 60_000,
   });
+}
+
+export function getPrimaryRpcEndpoint() {
+  return isPlaceholderRpc(QUICKNODE_RPC_URL)
+    ? PUBLIC_SOLANA_RPC_ENDPOINT
+    : QUICKNODE_RPC_URL;
+}
+
+export function getConnection() {
+  return createSolanaConnection(getPrimaryRpcEndpoint());
+}
+
+export function getFallbackConnection() {
+  return createSolanaConnection(PUBLIC_SOLANA_RPC_ENDPOINT);
+}
+
+export async function withRpcFallback<T>(
+  operation: (connection: Connection, endpoint: string) => Promise<T>,
+) {
+  const primaryEndpoint = getPrimaryRpcEndpoint();
+  const primaryConnection = createSolanaConnection(primaryEndpoint);
+
+  try {
+    return await operation(primaryConnection, primaryEndpoint);
+  } catch (error) {
+    if (
+      !isRpcAccessDenied(error) ||
+      primaryEndpoint === PUBLIC_SOLANA_RPC_ENDPOINT
+    ) {
+      throw error;
+    }
+
+    const fallbackConnection = getFallbackConnection();
+    return operation(fallbackConnection, PUBLIC_SOLANA_RPC_ENDPOINT);
+  }
 }
 
 export function parseWalletPublicKey(wallet: string) {
@@ -54,31 +89,32 @@ async function fetchSplTokenAsset(
 
 export async function fetchPortfolio(wallet: string): Promise<PortfolioSnapshot> {
   const owner = parseWalletPublicKey(wallet);
-  const connection = getConnection();
 
-  const [lamports, ...tokenAssets] = await Promise.all([
-    connection.getBalance(owner),
-    ...Object.values(SUPPORTED_DEPOSIT_ASSETS).map((asset) =>
-      fetchSplTokenAsset(connection, owner, asset),
-    ),
-  ]);
+  return withRpcFallback(async (connection) => {
+    const [lamports, ...tokenAssets] = await Promise.all([
+      connection.getBalance(owner),
+      ...Object.values(SUPPORTED_DEPOSIT_ASSETS).map((asset) =>
+        fetchSplTokenAsset(connection, owner, asset),
+      ),
+    ]);
 
-  const assets: PortfolioAsset[] = [
-    {
-      symbol: "SOL",
-      mint: null,
-      decimals: 9,
-      uiAmount: lamports / LAMPORTS_PER_SOL,
-      rawAmount: String(lamports),
-      source: "native",
-    },
-    ...tokenAssets,
-  ];
+    const assets: PortfolioAsset[] = [
+      {
+        symbol: "SOL",
+        mint: null,
+        decimals: 9,
+        uiAmount: lamports / LAMPORTS_PER_SOL,
+        rawAmount: String(lamports),
+        source: "native",
+      },
+      ...tokenAssets,
+    ];
 
-  return {
-    wallet: owner.toBase58(),
-    rpcEndpoint: connection.rpcEndpoint,
-    assets,
-    fetchedAt: new Date().toISOString(),
-  };
+    return {
+      wallet: owner.toBase58(),
+      rpcEndpoint: connection.rpcEndpoint,
+      assets,
+      fetchedAt: new Date().toISOString(),
+    };
+  });
 }

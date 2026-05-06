@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  getFriendlyRpcErrorMessage,
+  isRpcAccessDenied,
+} from "@/lib/solana/rpc-errors";
 import { buildKaminoDepositTransaction } from "@/lib/tx/kamino-deposit";
 import type { YieldRoute } from "@/lib/types";
 
@@ -27,14 +31,18 @@ export async function POST(request: Request) {
 
     return NextResponse.json(transaction);
   } catch (error) {
+    const rpcAccessDenied = isRpcAccessDenied(error);
+
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to build Kamino transaction",
+          rpcAccessDenied
+            ? getFriendlyRpcErrorMessage(error)
+            : error instanceof Error
+              ? error.message
+              : "Failed to build Kamino transaction",
       },
-      { status: 400 },
+      { status: rpcAccessDenied ? 403 : 400 },
     );
   }
 }

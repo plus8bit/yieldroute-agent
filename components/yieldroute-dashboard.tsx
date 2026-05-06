@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { VersionedTransaction } from "@solana/web3.js";
+import { Connection, VersionedTransaction } from "@solana/web3.js";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { Buffer } from "buffer";
@@ -34,7 +34,12 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useRpcFallback } from "@/components/solana-providers";
 import type { DepositAssetSymbol } from "@/lib/config";
+import {
+  getFriendlyRpcErrorMessage,
+  isRpcAccessDenied,
+} from "@/lib/solana/rpc-errors";
 import type {
   KaminoReserveMarket,
   PortfolioAsset,
@@ -88,6 +93,7 @@ type BuildTransactionResponse = {
     };
   } | null;
   signOnClient: boolean;
+  simulationRpcEndpoint?: string;
 };
 
 const SOLSCAN_BASE = "https://solscan.io/tx";
@@ -158,6 +164,14 @@ class ApiRequestError extends Error {
   }
 }
 
+function normalizeClientError(error: unknown) {
+  if (isRpcAccessDenied(error)) {
+    return getFriendlyRpcErrorMessage(error);
+  }
+
+  return error instanceof Error ? error.message : "Transaction failed.";
+}
+
 function formatAmount(value: number, maximumFractionDigits = 6) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits,
@@ -219,6 +233,7 @@ function isCacheFresh(entry: RoutePlanCacheEntry) {
 
 export function YieldRouteDashboard() {
   const { connection } = useConnection();
+  const { createFallbackConnection, switchToFallback } = useRpcFallback();
   const {
     publicKey,
     connected,
@@ -568,24 +583,64 @@ export function YieldRouteDashboard() {
       appendTerminal("info", "wallet.signTransaction requested");
       const signedTransaction = await signTransaction(transaction);
 
+      const signedBytes = signedTransaction.serialize();
+
       appendTerminal("info", "connection.sendRawTransaction");
-      const txSignature = await connection.sendRawTransaction(
-        signedTransaction.serialize(),
-        {
+      let broadcastConnection: Connection = connection;
+      let txSignature: string;
+
+      try {
+        txSignature = await connection.sendRawTransaction(signedBytes, {
           maxRetries: 3,
           skipPreflight: false,
-        },
-      );
+        });
+      } catch (sendError) {
+        if (!isRpcAccessDenied(sendError)) {
+          throw sendError;
+        }
+
+        const message = "RPC Access Denied. Switching to public network...";
+        appendTerminal("warn", message);
+        toast.warning(message);
+        switchToFallback("sendRawTransaction returned 403");
+
+        broadcastConnection = createFallbackConnection();
+        txSignature = await broadcastConnection.sendRawTransaction(signedBytes, {
+          maxRetries: 3,
+          skipPreflight: false,
+        });
+      }
 
       appendTerminal("info", `confirmTransaction signature=${shortKey(txSignature)}`);
-      await connection.confirmTransaction(
-        {
-          signature: txSignature,
-          blockhash: txPayload.latestBlockhash.blockhash,
-          lastValidBlockHeight: txPayload.latestBlockhash.lastValidBlockHeight,
-        },
-        "confirmed",
-      );
+      try {
+        await broadcastConnection.confirmTransaction(
+          {
+            signature: txSignature,
+            blockhash: txPayload.latestBlockhash.blockhash,
+            lastValidBlockHeight: txPayload.latestBlockhash.lastValidBlockHeight,
+          },
+          "confirmed",
+        );
+      } catch (confirmError) {
+        if (!isRpcAccessDenied(confirmError)) {
+          throw confirmError;
+        }
+
+        const message = "RPC Access Denied. Confirming on public network...";
+        appendTerminal("warn", message);
+        toast.warning(message);
+        switchToFallback("confirmTransaction returned 403");
+
+        const fallbackConnection = createFallbackConnection();
+        await fallbackConnection.confirmTransaction(
+          {
+            signature: txSignature,
+            blockhash: txPayload.latestBlockhash.blockhash,
+            lastValidBlockHeight: txPayload.latestBlockhash.lastValidBlockHeight,
+          },
+          "confirmed",
+        );
+      }
 
       setSignature(txSignature);
       setActivePositions((current) => [
@@ -612,8 +667,7 @@ export function YieldRouteDashboard() {
         force: true,
       });
     } catch (caught) {
-      const message =
-        caught instanceof Error ? caught.message : "Transaction failed.";
+      const message = normalizeClientError(caught);
       setError(message);
       setScreenState("error");
       appendTerminal("error", message);

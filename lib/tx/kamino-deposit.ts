@@ -1,7 +1,7 @@
 import { Transaction, VersionedTransaction } from "@solana/web3.js";
 import { KAMINO_API_BASE_URL } from "@/lib/config";
 import { getKaminoSdkCapabilities } from "@/lib/kamino/sdk";
-import { getConnection, parseWalletPublicKey } from "@/lib/solana/rpc";
+import { parseWalletPublicKey, withRpcFallback } from "@/lib/solana/rpc";
 import type { YieldRoute } from "@/lib/types";
 
 type BuildDepositInput = {
@@ -70,31 +70,39 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
   }
 
   const decoded = deserializeTransaction(payload.transaction);
-  const connection = getConnection();
-  const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+  const simulationResult = await withRpcFallback(async (connection) => {
+    const latestBlockhash = await connection.getLatestBlockhash("confirmed");
 
-  let simulation: unknown = null;
-  if (input.simulate !== false) {
-    if (decoded.kind === "versioned") {
-      simulation = await connection.simulateTransaction(decoded.transaction, {
-        sigVerify: false,
-        replaceRecentBlockhash: true,
-      });
-    } else {
-      decoded.transaction.recentBlockhash = latestBlockhash.blockhash;
-      decoded.transaction.feePayer = parseWalletPublicKey(input.wallet);
-      simulation = await connection.simulateTransaction(decoded.transaction);
+    let simulation: unknown = null;
+    if (input.simulate !== false) {
+      if (decoded.kind === "versioned") {
+        simulation = await connection.simulateTransaction(decoded.transaction, {
+          sigVerify: false,
+          replaceRecentBlockhash: true,
+        });
+      } else {
+        decoded.transaction.recentBlockhash = latestBlockhash.blockhash;
+        decoded.transaction.feePayer = parseWalletPublicKey(input.wallet);
+        simulation = await connection.simulateTransaction(decoded.transaction);
+      }
     }
-  }
+
+    return {
+      latestBlockhash,
+      simulation,
+      rpcEndpoint: connection.rpcEndpoint,
+    };
+  });
 
   return {
     transactionBase64: payload.transaction,
     transactionKind: decoded.kind,
     messageBytes: decoded.rawBytes.length,
     feePayer: input.wallet,
-    latestBlockhash,
+    latestBlockhash: simulationResult.latestBlockhash,
     sdkCapabilities,
-    simulation,
+    simulation: simulationResult.simulation,
+    simulationRpcEndpoint: simulationResult.rpcEndpoint,
     signOnClient: true,
   };
 }

@@ -1,6 +1,8 @@
+import { PUBLIC_SOLANA_RPC_ENDPOINT } from "@/lib/solana/rpc-errors";
+
 export const QUICKNODE_RPC_URL =
   process.env.QUICKNODE_RPC_URL?.trim() ||
-  "https://api.mainnet-beta.solana.com";
+  PUBLIC_SOLANA_RPC_ENDPOINT;
 
 export const KAMINO_API_BASE_URL =
   process.env.KAMINO_API_BASE_URL?.trim() || "https://api.kamino.finance";
