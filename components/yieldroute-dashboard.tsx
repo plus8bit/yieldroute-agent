@@ -150,6 +150,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     throw new ApiRequestError(
       payload?.error || `Request failed: ${path}`,
       response.status,
+      data,
     );
   }
 
@@ -160,6 +161,7 @@ class ApiRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly payload?: unknown,
   ) {
     super(message);
     this.name = "ApiRequestError";
@@ -176,6 +178,14 @@ function normalizeClientError(error: unknown) {
   }
 
   return error instanceof Error ? error.message : "Transaction failed.";
+}
+
+function getProgramLogs(error: unknown) {
+  if (!(error instanceof ApiRequestError)) return [];
+  const payload = error.payload as { programLogs?: unknown } | null;
+  return Array.isArray(payload?.programLogs)
+    ? payload.programLogs.filter((line): line is string => typeof line === "string")
+    : [];
 }
 
 function formatAmount(value: number, maximumFractionDigits = 6) {
@@ -683,9 +693,16 @@ export function YieldRouteDashboard() {
       });
     } catch (caught) {
       const message = normalizeClientError(caught);
+      const programLogs = getProgramLogs(caught);
       setError(message);
       setScreenState("error");
       appendTerminal("error", message);
+      programLogs.slice(-10).forEach((line) => {
+        appendTerminal(
+          line.toLowerCase().includes("error") ? "error" : "warn",
+          line,
+        );
+      });
       toast.error(message);
     }
   };

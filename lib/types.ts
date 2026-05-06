@@ -9,6 +9,8 @@ export type PortfolioAsset = {
   uiAmount: number;
   rawAmount: string;
   source: "native" | "spl-token";
+  tokenAccount?: string;
+  tokenAccountType?: "associated";
 };
 
 export type PortfolioSnapshot = {

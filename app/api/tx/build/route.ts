@@ -29,6 +29,23 @@ export async function POST(request: Request) {
       simulate: body.simulate,
     });
 
+    const simulationValue = (
+      transaction.simulation as {
+        value?: { err?: unknown; logs?: string[] };
+      } | null
+    )?.value;
+    if (simulationValue?.err) {
+      return NextResponse.json(
+        {
+          error: "Simulation failed before signing. Program logs added to terminal.",
+          simulationError: simulationValue.err,
+          programLogs: simulationValue.logs || [],
+          simulationRpcEndpoint: transaction.simulationRpcEndpoint,
+        },
+        { status: 400 },
+      );
+    }
+
     return NextResponse.json(transaction);
   } catch (error) {
     const rpcAccessDenied = isRpcAccessDenied(error);

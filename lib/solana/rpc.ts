@@ -11,6 +11,12 @@ import {
 import type { PortfolioAsset, PortfolioSnapshot } from "@/lib/types";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
+const TOKEN_PROGRAM_ID = new PublicKey(
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+);
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+);
 
 export function createSolanaConnection(endpoint: string) {
   return new Connection(endpoint, {
@@ -67,15 +73,31 @@ async function fetchSplTokenAsset(
   owner: PublicKey,
   asset: (typeof SUPPORTED_DEPOSIT_ASSETS)[keyof typeof SUPPORTED_DEPOSIT_ASSETS],
 ): Promise<PortfolioAsset> {
-  const accounts = await connection.getParsedTokenAccountsByOwner(owner, {
-    mint: new PublicKey(asset.mint),
-  });
+  const mint = new PublicKey(asset.mint);
+  const [associatedTokenAccount] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  );
+  const account = await connection.getParsedAccountInfo(
+    associatedTokenAccount,
+    "confirmed",
+  );
+  let raw = 0n;
 
-  const raw = accounts.value.reduce((sum, account) => {
-    const parsed = account.account.data.parsed;
-    const amount = parsed.info.tokenAmount.amount as string;
-    return sum + BigInt(amount);
-  }, 0n);
+  if (
+    account.value &&
+    "parsed" in account.value.data &&
+    account.value.data.parsed?.type === "account"
+  ) {
+    const parsed = account.value.data.parsed;
+    const info = parsed.info;
+    const accountMint = info.mint as string | undefined;
+    const accountOwner = info.owner as string | undefined;
+
+    if (accountMint === asset.mint && accountOwner === owner.toBase58()) {
+      raw = BigInt(info.tokenAmount.amount as string);
+    }
+  }
 
   return {
     symbol: asset.symbol,
@@ -84,6 +106,8 @@ async function fetchSplTokenAsset(
     uiAmount: Number(raw) / 10 ** asset.decimals,
     rawAmount: raw.toString(),
     source: "spl-token",
+    tokenAccount: associatedTokenAccount.toBase58(),
+    tokenAccountType: "associated",
   };
 }
 
