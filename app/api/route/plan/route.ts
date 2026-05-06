@@ -19,9 +19,9 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       wallet?: string;
       assetSymbol?: DepositAssetSymbol;
-      amountUi?: number;
-      maxAmount?: number;
-      maxAmountUsdc?: number;
+      amountUi?: number | string;
+      maxAmount?: number | string;
+      maxAmountUsdc?: number | string;
     };
 
     if (!body.wallet) {

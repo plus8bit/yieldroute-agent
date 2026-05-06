@@ -1,4 +1,5 @@
 import { Transaction, VersionedTransaction } from "@solana/web3.js";
+import { parseTokenAmount, sanitizeTokenAmountInput } from "@/lib/amounts";
 import { KAMINO_API_BASE_URL } from "@/lib/config";
 import { getKaminoSdkCapabilities } from "@/lib/kamino/sdk";
 import { parseWalletPublicKey, withRpcFallback } from "@/lib/solana/rpc";
@@ -39,9 +40,11 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
     throw new Error("Route wallet does not match request wallet");
   }
 
-  if (input.route.amountUi <= 0) {
+  const amountUi = parseTokenAmount(input.route.amountUi);
+  if (amountUi === null || amountUi <= 0) {
     throw new Error("Deposit amount must be greater than zero");
   }
+  const sanitizedAmount = sanitizeTokenAmountInput(amountUi);
 
   const sdkCapabilities = await getKaminoSdkCapabilities();
   const response = await fetch(`${KAMINO_API_BASE_URL}/ktx/klend/deposit`, {
@@ -54,7 +57,7 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
       wallet: input.wallet,
       market: input.route.marketAddress,
       reserve: input.route.reserveAddress,
-      amount: String(input.route.amountUi),
+      amount: sanitizedAmount,
     }),
   });
 

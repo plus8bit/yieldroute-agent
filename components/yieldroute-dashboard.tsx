@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Connection, VersionedTransaction } from "@solana/web3.js";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
@@ -35,6 +42,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRpcFallback } from "@/components/solana-providers";
+import { parseTokenAmount, sanitizeTokenAmountInput } from "@/lib/amounts";
 import type { DepositAssetSymbol } from "@/lib/config";
 import {
   getFriendlyRpcErrorMessage,
@@ -221,10 +229,7 @@ function getTerminalClass(level: TerminalLine["level"]) {
 }
 
 function parseDepositInput(value: string) {
-  const normalized = value.trim().replace(",", ".");
-  if (!normalized) return null;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
+  return parseTokenAmount(value);
 }
 
 function getRouteCacheKey({
@@ -524,6 +529,10 @@ export function YieldRouteDashboard() {
 
   const handleMax = () => {
     setDepositAmount(formatInputAmount(availableAmount));
+  };
+
+  const handleDepositAmountChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setDepositAmount(sanitizeTokenAmountInput(event.target.value));
   };
 
   const executeDeposit = async () => {
@@ -899,11 +908,9 @@ export function YieldRouteDashboard() {
                         <Input
                           inputMode="decimal"
                           min="0"
-                          onChange={(event) =>
-                            setDepositAmount(event.target.value)
-                          }
+                          onChange={handleDepositAmountChange}
                           placeholder={`0.00 ${selectedAsset}`}
-                          type="number"
+                          type="text"
                           value={depositAmount}
                         />
                         <Button

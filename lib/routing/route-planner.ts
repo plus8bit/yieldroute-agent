@@ -4,6 +4,7 @@ import {
   SUPPORTED_DEPOSIT_ASSETS,
   type DepositAssetSymbol,
 } from "@/lib/config";
+import { parseTokenAmount, tokenAmountToRaw } from "@/lib/amounts";
 import type {
   KaminoReserveMarket,
   PortfolioSnapshot,
@@ -13,17 +14,13 @@ import type {
 
 const MIN_ROUTE_TVL_USD = 100_000;
 
-function decimalToRawAmount(amount: number, decimals: number) {
-  return Math.floor(amount * 10 ** decimals).toString();
-}
-
 export function planUsdcDepositRoute(params: {
   wallet: string;
   portfolio: PortfolioSnapshot;
   markets: KaminoReserveMarket[];
   assetSymbol?: DepositAssetSymbol;
-  amountUi?: number;
-  maxAmount?: number;
+  amountUi?: number | string;
+  maxAmount?: number | string;
 }): RoutePlan {
   const assetSymbol = params.assetSymbol || DEFAULT_DEPOSIT_ASSET;
   const asset = SUPPORTED_DEPOSIT_ASSETS[assetSymbol];
@@ -59,12 +56,22 @@ export function planUsdcDepositRoute(params: {
     };
   }
 
-  const cap = params.maxAmount || MAX_DEPOSIT_AMOUNT;
+  const parsedMaxAmount = parseTokenAmount(params.maxAmount);
+  const parsedAmountUi = parseTokenAmount(params.amountUi);
+  const cap =
+    parsedMaxAmount !== null && parsedMaxAmount > 0
+      ? parsedMaxAmount
+      : MAX_DEPOSIT_AMOUNT;
   const requested =
-    params.amountUi && Number.isFinite(params.amountUi) && params.amountUi > 0
-      ? params.amountUi
+    parsedAmountUi !== null && parsedAmountUi > 0
+      ? parsedAmountUi
       : cap;
   const amountUi = Math.max(0, Math.min(idleAmount, requested, cap));
+  const amountRaw = tokenAmountToRaw(amountUi, asset.decimals);
+
+  if (amountRaw === null) {
+    throw new Error("Invalid deposit amount");
+  }
 
   const route: YieldRoute = {
     action: "kamino_deposit",
@@ -72,7 +79,7 @@ export function planUsdcDepositRoute(params: {
     inputMint: asset.mint,
     inputSymbol: assetSymbol,
     amountUi,
-    amountRaw: decimalToRawAmount(amountUi, asset.decimals),
+    amountRaw,
     marketName: best.marketName,
     marketAddress: best.marketAddress,
     reserveAddress: best.reserveAddress,
