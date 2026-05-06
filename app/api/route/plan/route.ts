@@ -7,6 +7,10 @@ import {
 import { fetchKaminoReserveMarkets } from "@/lib/kamino/markets";
 import { planUsdcDepositRoute } from "@/lib/routing/route-planner";
 import { fetchPortfolio } from "@/lib/solana/rpc";
+import {
+  getFriendlyRpcErrorMessage,
+  isRpcRateLimited,
+} from "@/lib/solana/rpc-errors";
 
 export const runtime = "nodejs";
 
@@ -51,12 +55,18 @@ export async function POST(request: Request) {
 
     return NextResponse.json(plan);
   } catch (error) {
+    const rateLimited = isRpcRateLimited(error);
+
     return NextResponse.json(
       {
         error:
-          error instanceof Error ? error.message : "Failed to build route plan",
+          rateLimited
+            ? getFriendlyRpcErrorMessage(error)
+            : error instanceof Error
+              ? error.message
+              : "Failed to build route plan",
       },
-      { status: 400 },
+      { status: rateLimited ? 429 : 400 },
     );
   }
 }

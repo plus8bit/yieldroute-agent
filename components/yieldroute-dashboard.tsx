@@ -39,6 +39,7 @@ import type { DepositAssetSymbol } from "@/lib/config";
 import {
   getFriendlyRpcErrorMessage,
   isRpcAccessDenied,
+  isRpcRateLimited,
 } from "@/lib/solana/rpc-errors";
 import type {
   KaminoReserveMarket,
@@ -55,6 +56,7 @@ type ScreenState =
   | "ready"
   | "executing"
   | "success"
+  | "retrying"
   | "error";
 
 type TerminalLine = {
@@ -99,7 +101,7 @@ type BuildTransactionResponse = {
 const SOLSCAN_BASE = "https://solscan.io/tx";
 const KAMINO_APP_URL = "https://app.kamino.finance/lending";
 const ROUTE_CACHE_TTL_MS = 60_000;
-const RATE_LIMIT_RETRY_MS = 5_000;
+const RATE_LIMIT_RETRY_MS = 3_000;
 
 const TOKEN_ICONS: Record<PortfolioAsset["symbol"], string> = {
   SOL: "https://assets.coingecko.com/coins/images/4128/large/solana.png",
@@ -169,6 +171,10 @@ function normalizeClientError(error: unknown) {
     return getFriendlyRpcErrorMessage(error);
   }
 
+  if (isRpcRateLimited(error)) {
+    return getFriendlyRpcErrorMessage(error);
+  }
+
   return error instanceof Error ? error.message : "Transaction failed.";
 }
 
@@ -229,6 +235,11 @@ function getRouteCacheKey({
 
 function isCacheFresh(entry: RoutePlanCacheEntry) {
   return Date.now() - entry.fetchedAt < ROUTE_CACHE_TTL_MS;
+}
+
+function isRoutePlanRateLimited(error: unknown) {
+  if (error instanceof ApiRequestError && error.status === 429) return true;
+  return isRpcRateLimited(error);
 }
 
 export function YieldRouteDashboard() {
@@ -427,17 +438,19 @@ export function YieldRouteDashboard() {
       } catch (caught) {
         if (requestId !== loadRequestId.current) return;
 
-        if (caught instanceof ApiRequestError && caught.status === 429) {
-          const message = "Rate limited. Retrying in 5s...";
+        if (isRoutePlanRateLimited(caught)) {
+          const message = "Network congested. Retrying in 3 seconds...";
           setError(message);
           toast.warning(message);
           appendTerminal("warn", `rpc.rate_limited retryMs=${RATE_LIMIT_RETRY_MS}`);
 
           if (cached) {
             applyRoutePlan(cached.plan, params.assetSymbol, { fromCache: true });
-            setError("Rate limited. Showing cached route while retrying in 5s...");
+            setError("Network congested. Showing cached route while retrying...");
           } else {
-            setScreenState("error");
+            setScreenState("retrying");
+            setRoute(null);
+            setCandidates([]);
           }
 
           if (!retryTimersRef.current.has(cacheKey)) {
@@ -455,7 +468,9 @@ export function YieldRouteDashboard() {
         }
 
         const message =
-          caught instanceof Error ? caught.message : "Failed to load route";
+          caught instanceof Error
+            ? getFriendlyRpcErrorMessage(caught)
+            : "Failed to load route";
         setError(message);
         setScreenState("error");
         appendTerminal("error", message);
@@ -763,8 +778,16 @@ export function YieldRouteDashboard() {
                     Read-only RPC snapshot for the connected wallet.
                   </CardDescription>
                 </div>
-                <Badge variant={screenState === "loading" ? "warning" : "success"}>
-                  {screenState === "loading" ? "Loading" : "Live"}
+                <Badge
+                  variant={
+                    screenState === "loading" || screenState === "retrying"
+                      ? "warning"
+                      : "success"
+                  }
+                >
+                  {screenState === "loading" || screenState === "retrying"
+                    ? "Loading"
+                    : "Live"}
                 </Badge>
               </div>
             </CardHeader>
@@ -832,6 +855,8 @@ export function YieldRouteDashboard() {
             <CardContent>
               {screenState === "loading" ? (
                 <LoadingRoute />
+              ) : screenState === "retrying" ? (
+                <RetryingRoutePlan />
               ) : route ? (
                 <div className="flex flex-col gap-5">
                   <div className="grid gap-3 md:grid-cols-3">
@@ -1261,6 +1286,22 @@ function EmptyRoute({
       <p className="mt-2 text-sm text-zinc-400">
         {error ||
           `Connect wallet and refresh portfolio to calculate a ${selectedAsset} route.`}
+      </p>
+    </div>
+  );
+}
+
+function RetryingRoutePlan() {
+  return (
+    <div className="flex min-h-80 flex-col items-center justify-center rounded-lg border border-solflare/20 bg-solflare/10 p-6 text-center">
+      <div className="flex size-12 items-center justify-center rounded-lg bg-solflare text-black">
+        <Loader2 className="animate-spin" />
+      </div>
+      <h2 className="mt-4 text-xl font-semibold text-zinc-50">
+        Network congested
+      </h2>
+      <p className="mt-2 max-w-sm text-sm leading-6 text-zinc-300">
+        Retrying in 3 seconds...
       </p>
     </div>
   );

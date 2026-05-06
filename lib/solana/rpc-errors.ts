@@ -41,9 +41,25 @@ export function isRpcUnavailable(error: unknown) {
   );
 }
 
+export function isRpcRateLimited(error: unknown) {
+  const text = stringifyRpcError(error).toLowerCase();
+
+  return (
+    text.includes("429") ||
+    text.includes("too many requests") ||
+    text.includes("rate limit") ||
+    text.includes("rate-limited") ||
+    text.includes("rate limited")
+  );
+}
+
 export function getFriendlyRpcErrorMessage(error: unknown) {
   if (isRpcAccessDenied(error)) {
     return "RPC Access Denied. Switching to public network...";
+  }
+
+  if (isRpcRateLimited(error)) {
+    return "Network congested. Retrying in 3 seconds...";
   }
 
   return error instanceof Error
