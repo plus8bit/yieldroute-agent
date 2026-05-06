@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --background: 240 10% 4%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 6%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 5%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 55 100% 64%;
+  --primary-foreground: 0 0% 6%;
+  --secondary: 240 4% 14%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 4% 16%;
+  --muted-foreground: 240 5% 65%;
+  --accent: 55 100% 64%;
+  --accent-foreground: 0 0% 6%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 4% 18%;
+  --input: 240 4% 18%;
+  --ring: 55 100% 64%;
+}
+
+html,
+body {
+  min-height: 100%;
+  background: #050505;
+  color: #fafafa;
+}
+
+body {
+  margin: 0;
+  font-feature-settings:
+    "rlig" 1,
+    "calt" 1;
+}
+
+.wallet-adapter-modal-wrapper {
+  background: rgba(9, 9, 11, 0.96);
+  border: 1px solid rgba(255, 239, 70, 0.24);
+  border-radius: 12px;
+}
+
+.wallet-adapter-modal-title {
+  color: #fafafa;
+}
+
+.wallet-adapter-button {
+  font-family: inherit;
+}
+
+.wallet-adapter-button-trigger {
+  height: 48px !important;
+  border-radius: 6px !important;
+  background: #ffef46 !important;
+  color: #050505 !important;
+  padding: 0 32px !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+}
+
+.wallet-adapter-button-trigger:hover {
+  background: #fff36f !important;
+}
+
+.wallet-adapter-button-trigger .wallet-adapter-button-start-icon {
+  margin-right: 10px !important;
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button {
+  border-radius: 8px;
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button:hover {
+  background: rgba(255, 239, 70, 0.12);
+}

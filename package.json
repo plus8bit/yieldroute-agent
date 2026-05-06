@@ -1,0 +1,46 @@
+{
+  "name": "yieldroute-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MVP for Eitherway Frontier: Solflare x Kamino x Quicknode yield route agent.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kamino-finance/farms-sdk": "3.2.24",
+    "@kamino-finance/klend-sdk": "^7.3.22",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@solana-program/compute-budget": "^0.15.0",
+    "@solana/kit": "^6.8.0",
+    "@solana/wallet-adapter-base": "^0.9.27",
+    "@solana/wallet-adapter-react": "^0.15.39",
+    "@solana/wallet-adapter-react-ui": "^0.9.39",
+    "@solana/wallet-adapter-solflare": "^0.6.33",
+    "@solana/web3.js": "^1.98.4",
+    "axios": "^1.13.2",
+    "bn.js": "^5.2.2",
+    "buffer": "^6.0.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.14.0",
+    "next": "16.2.4",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.2.0",
+    "@types/node": "^24.10.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.22",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^6.0.3"
+  }
+}
