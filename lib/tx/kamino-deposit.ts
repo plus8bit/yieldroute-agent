@@ -1,6 +1,16 @@
-import { Transaction, VersionedTransaction } from "@solana/web3.js";
-import { parseTokenAmount, sanitizeTokenAmountInput } from "@/lib/amounts";
-import { KAMINO_API_BASE_URL } from "@/lib/config";
+import {
+  Connection,
+  PublicKey,
+  Transaction,
+  VersionedTransaction,
+} from "@solana/web3.js";
+import {
+  assertNoFractionalRawAmount,
+  parseTokenAmount,
+  sanitizeTokenAmountInput,
+  tokenAmountToRawBigInt,
+} from "@/lib/amounts";
+import { KAMINO_API_BASE_URL, SUPPORTED_DEPOSIT_ASSETS } from "@/lib/config";
 import { getKaminoSdkCapabilities } from "@/lib/kamino/sdk";
 import { parseWalletPublicKey, withRpcFallback } from "@/lib/solana/rpc";
 import type { YieldRoute } from "@/lib/types";
@@ -10,6 +20,13 @@ type BuildDepositInput = {
   route: YieldRoute;
   simulate?: boolean;
 };
+
+const TOKEN_PROGRAM_ID = new PublicKey(
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+);
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+);
 
 function deserializeTransaction(encodedTransaction: string) {
   const bytes = Buffer.from(encodedTransaction, "base64");
@@ -29,8 +46,45 @@ function deserializeTransaction(encodedTransaction: string) {
   }
 }
 
+function getAssociatedTokenAddress(owner: PublicKey, mint: PublicKey) {
+  const [associatedTokenAccount] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  );
+
+  return associatedTokenAccount;
+}
+
+async function getSourceAtaBalance(params: {
+  connection: Connection;
+  owner: PublicKey;
+  mint: PublicKey;
+}) {
+  const sourceAta = getAssociatedTokenAddress(params.owner, params.mint);
+  const account = await params.connection.getParsedAccountInfo(
+    sourceAta,
+    "confirmed",
+  );
+
+  if (
+    !account.value ||
+    !("parsed" in account.value.data) ||
+    account.value.data.parsed?.type !== "account"
+  ) {
+    return {
+      sourceAta: sourceAta.toBase58(),
+      sourceAtaBalance: "0",
+    };
+  }
+
+  return {
+    sourceAta: sourceAta.toBase58(),
+    sourceAtaBalance: String(account.value.data.parsed.info.tokenAmount.amount),
+  };
+}
+
 export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
-  parseWalletPublicKey(input.wallet);
+  const walletPublicKey = parseWalletPublicKey(input.wallet);
 
   if (input.route.action !== "kamino_deposit") {
     throw new Error("Unsupported route action");
@@ -40,11 +94,22 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
     throw new Error("Route wallet does not match request wallet");
   }
 
+  const asset = SUPPORTED_DEPOSIT_ASSETS[input.route.inputSymbol];
+  if (!asset || asset.mint !== input.route.inputMint) {
+    throw new Error("Route token mint does not match supported asset config");
+  }
+
   const amountUi = parseTokenAmount(input.route.amountUi);
   if (amountUi === null || amountUi <= 0) {
     throw new Error("Deposit amount must be greater than zero");
   }
-  const sanitizedAmount = sanitizeTokenAmountInput(amountUi);
+  assertNoFractionalRawAmount(input.route.amountUi, asset.decimals);
+  const amountRaw = tokenAmountToRawBigInt(input.route.amountUi, asset.decimals);
+  if (amountRaw === null) {
+    throw new Error("Invalid deposit amount");
+  }
+  const sanitizedAmount = sanitizeTokenAmountInput(input.route.amountUi);
+  const inputMint = new PublicKey(input.route.inputMint);
 
   const sdkCapabilities = await getKaminoSdkCapabilities();
   const response = await fetch(`${KAMINO_API_BASE_URL}/ktx/klend/deposit`, {
@@ -75,6 +140,24 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
   const decoded = deserializeTransaction(payload.transaction);
   const simulationResult = await withRpcFallback(async (connection) => {
     const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+    const { sourceAta, sourceAtaBalance } = await getSourceAtaBalance({
+      connection,
+      owner: walletPublicKey,
+      mint: inputMint,
+    });
+
+    console.log("[tx/build] deposit simulation inputs", {
+      wallet: input.wallet,
+      inputSymbol: input.route.inputSymbol,
+      inputMint: input.route.inputMint,
+      market: input.route.marketAddress,
+      reserve: input.route.reserveAddress,
+      amountUi: sanitizedAmount,
+      amountRaw: amountRaw.toString(),
+      sourceAta,
+      sourceAtaBalance,
+      rpcEndpoint: connection.rpcEndpoint,
+    });
 
     let simulation: unknown = null;
     if (input.simulate !== false) {

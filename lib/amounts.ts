@@ -13,8 +13,36 @@ export function parseTokenAmount(amountUi: unknown) {
 }
 
 export function tokenAmountToRaw(amountUi: unknown, decimals: number) {
-  const amount = parseTokenAmount(amountUi);
-  if (amount === null) return null;
+  const raw = tokenAmountToRawBigInt(amountUi, decimals);
+  return raw === null ? null : raw.toString();
+}
 
-  return Math.floor(amount * 10 ** decimals).toString();
+export function tokenAmountToRawBigInt(amountUi: unknown, decimals: number) {
+  const sanitizedAmount = sanitizeTokenAmountInput(amountUi);
+  if (!sanitizedAmount) return null;
+
+  if (!/^\d+(\.\d+)?$/.test(sanitizedAmount)) {
+    return null;
+  }
+
+  const [wholePart, fractionPart = ""] = sanitizedAmount.split(".");
+  const extraPrecision = fractionPart.slice(decimals);
+
+  if (extraPrecision.length > 0 && /[1-9]/.test(extraPrecision)) {
+    throw new Error(`Amount has more than ${decimals} decimal places`);
+  }
+
+  const paddedFraction = fractionPart.slice(0, decimals).padEnd(decimals, "0");
+  return BigInt(wholePart || "0") * 10n ** BigInt(decimals) + BigInt(paddedFraction || "0");
+}
+
+export function assertNoFractionalRawAmount(amountUi: unknown, decimals: number) {
+  const sanitizedAmount = sanitizeTokenAmountInput(amountUi);
+  const scaled = parseFloat(sanitizedAmount) * 10 ** decimals;
+
+  if (!Number.isFinite(scaled) || !Number.isInteger(Math.round(scaled))) {
+    throw new Error("Invalid token amount precision");
+  }
+
+  return BigInt(Math.round(scaled));
 }

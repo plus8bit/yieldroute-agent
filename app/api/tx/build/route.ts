@@ -8,6 +8,17 @@ import type { YieldRoute } from "@/lib/types";
 
 export const runtime = "nodejs";
 
+function getLastProgramFailureLog(logs: string[]) {
+  return (
+    [...logs]
+      .reverse()
+      .find((line) => {
+        const normalized = line.toLowerCase();
+        return normalized.includes("error") || normalized.includes("failed to fill");
+      }) || null
+  );
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
@@ -35,11 +46,17 @@ export async function POST(request: Request) {
       } | null
     )?.value;
     if (simulationValue?.err) {
+      const programLogs = simulationValue.logs || [];
+      const failureLog = getLastProgramFailureLog(programLogs);
+
       return NextResponse.json(
         {
-          error: "Simulation failed before signing. Program logs added to terminal.",
+          error: failureLog
+            ? `Simulation failed before signing: ${failureLog}`
+            : "Simulation failed before signing. Check Transaction Terminal.",
           simulationError: simulationValue.err,
-          programLogs: simulationValue.logs || [],
+          programFailureLog: failureLog,
+          programLogs,
           simulationRpcEndpoint: transaction.simulationRpcEndpoint,
         },
         { status: 400 },

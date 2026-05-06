@@ -196,6 +196,17 @@ function getProgramLogs(error: unknown) {
     : [];
 }
 
+function getLastProgramFailureLog(logs: string[]) {
+  return (
+    [...logs]
+      .reverse()
+      .find((line) => {
+        const normalized = line.toLowerCase();
+        return normalized.includes("error") || normalized.includes("failed to fill");
+      }) || null
+  );
+}
+
 function formatAmount(value: number, maximumFractionDigits = 6) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits,
@@ -703,15 +714,13 @@ export function YieldRouteDashboard() {
     } catch (caught) {
       const message = normalizeClientError(caught);
       const programLogs = getProgramLogs(caught);
+      const programFailureLog = getLastProgramFailureLog(programLogs);
       setError(message);
       setScreenState("error");
       appendTerminal("error", message);
-      programLogs.slice(-10).forEach((line) => {
-        appendTerminal(
-          line.toLowerCase().includes("error") ? "error" : "warn",
-          line,
-        );
-      });
+      if (programFailureLog) {
+        appendTerminal("error", programFailureLog);
+      }
       toast.error(message);
     }
   };
