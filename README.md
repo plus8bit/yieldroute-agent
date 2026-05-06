@@ -7,6 +7,7 @@ The current version implements the data and transaction pipeline:
 - read wallet SOL, USDC and USDT balances through Solana RPC;
 - fetch Kamino markets and USDC/USDT reserve metrics;
 - select a deposit route for idle USDC or USDT;
+- cache client-side route plans for 60 seconds to reduce RPC pressure while switching assets;
 - build an unsigned Kamino deposit transaction for client-side Solflare signing.
 - connect Solflare and submit signed transaction bytes from the browser.
 

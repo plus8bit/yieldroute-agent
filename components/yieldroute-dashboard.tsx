@@ -66,6 +66,11 @@ type ActivePosition = {
   signature: string;
 };
 
+type RoutePlanCacheEntry = {
+  plan: RoutePlan;
+  fetchedAt: number;
+};
+
 type BuildTransactionResponse = {
   transactionBase64: string;
   transactionKind: "versioned" | "legacy";
@@ -87,13 +92,21 @@ type BuildTransactionResponse = {
 
 const SOLSCAN_BASE = "https://solscan.io/tx";
 const KAMINO_APP_URL = "https://app.kamino.finance/lending";
+const ROUTE_CACHE_TTL_MS = 60_000;
+const RATE_LIMIT_RETRY_MS = 5_000;
+
+const TOKEN_ICONS: Record<PortfolioAsset["symbol"], string> = {
+  SOL: "https://assets.coingecko.com/coins/images/4128/large/solana.png",
+  USDC: "https://assets.coingecko.com/coins/images/6319/large/USD_Coin_icon.png",
+  USDT: "https://assets.coingecko.com/coins/images/325/large/Tether.png",
+};
 
 const DEPOSIT_ASSETS: Array<{
   symbol: DepositAssetSymbol;
   name: string;
 }> = [
   { symbol: "USDC", name: "USD Coin" },
-  { symbol: "USDT", name: "Tether USDt" },
+  { symbol: "USDT", name: "Tether" },
 ];
 
 function now() {
@@ -113,13 +126,36 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
 
-  const data = await response.json();
+  const text = await response.text();
+  let data: unknown = null;
+
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: text };
+    }
+  }
 
   if (!response.ok) {
-    throw new Error(data?.error || `Request failed: ${path}`);
+    const payload = data as { error?: string };
+    throw new ApiRequestError(
+      payload?.error || `Request failed: ${path}`,
+      response.status,
+    );
   }
 
   return data as T;
+}
+
+class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
 }
 
 function formatAmount(value: number, maximumFractionDigits = 6) {
@@ -161,6 +197,26 @@ function parseDepositInput(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function getRouteCacheKey({
+  wallet,
+  assetSymbol,
+  amountUi,
+}: {
+  wallet: string;
+  assetSymbol: DepositAssetSymbol;
+  amountUi?: number;
+}) {
+  const amountKey =
+    typeof amountUi === "number" && Number.isFinite(amountUi)
+      ? amountUi.toFixed(6)
+      : "auto";
+  return `${wallet}:${assetSymbol}:${amountKey}`;
+}
+
+function isCacheFresh(entry: RoutePlanCacheEntry) {
+  return Date.now() - entry.fetchedAt < ROUTE_CACHE_TTL_MS;
+}
+
 export function YieldRouteDashboard() {
   const { connection } = useConnection();
   const {
@@ -175,6 +231,8 @@ export function YieldRouteDashboard() {
     connect,
   } = useWallet();
   const loadRequestId = useRef(0);
+  const routePlanCacheRef = useRef(new Map<string, RoutePlanCacheEntry>());
+  const retryTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const [screenState, setScreenState] = useState<ScreenState>("disconnected");
   const [connectRequested, setConnectRequested] = useState(false);
   const [selectedAsset, setSelectedAsset] =
@@ -232,6 +290,40 @@ export function YieldRouteDashboard() {
     [],
   );
 
+  const applyRoutePlan = useCallback(
+    (
+      plan: RoutePlan,
+      assetSymbol: DepositAssetSymbol,
+      options: { fromCache?: boolean } = {},
+    ) => {
+      setPortfolio(plan.portfolio);
+      setRoute(plan.route);
+      setCandidates(plan.candidates);
+      appendTerminal(
+        options.fromCache ? "info" : "ok",
+        `${options.fromCache ? "cache.hit" : "portfolio.loaded"} assets=${plan.portfolio.assets.length}`,
+      );
+
+      if (plan.status === "ready" && plan.route) {
+        setScreenState("ready");
+        appendTerminal(
+          "ok",
+          `route.ready asset=${plan.route.inputSymbol} market=${plan.route.marketName}`,
+        );
+        return;
+      }
+
+      setScreenState("error");
+      const message =
+        plan.status === "no_balance"
+          ? `No idle ${assetSymbol} found.`
+          : `No eligible Kamino ${assetSymbol} market found.`;
+      setError(message);
+      appendTerminal("warn", `route.unavailable status=${plan.status}`);
+    },
+    [appendTerminal],
+  );
+
   const connectSolflare = useCallback(() => {
     setError(null);
     const solflare = wallets.find((entry) =>
@@ -279,18 +371,28 @@ export function YieldRouteDashboard() {
       assetSymbol: DepositAssetSymbol;
       amountUi?: number;
       quiet?: boolean;
+      force?: boolean;
     }) => {
       const requestId = ++loadRequestId.current;
+      const cacheKey = getRouteCacheKey(params);
+      const cached = routePlanCacheRef.current.get(cacheKey);
+
+      if (!params.force && cached && isCacheFresh(cached)) {
+        setError(null);
+        applyRoutePlan(cached.plan, params.assetSymbol, { fromCache: true });
+        return;
+      }
+
       if (!params.quiet) {
         setScreenState("loading");
+        setRoute(null);
+        setCandidates([]);
       }
       setError(null);
-      setRoute(null);
-      setCandidates([]);
       appendTerminal("info", `wallet.connected ${shortKey(params.wallet)}`);
       appendTerminal(
         "info",
-        `POST /api/route/plan asset=${params.assetSymbol}`,
+        `POST /api/route/plan asset=${params.assetSymbol}${params.force ? " force=true" : ""}`,
       );
 
       try {
@@ -302,31 +404,41 @@ export function YieldRouteDashboard() {
         });
         if (requestId !== loadRequestId.current) return;
 
-        setPortfolio(plan.portfolio);
-        setRoute(plan.route);
-        setCandidates(plan.candidates);
-        appendTerminal(
-          "ok",
-          `portfolio.loaded assets=${plan.portfolio.assets.length}`,
-        );
-
-        if (plan.status === "ready" && plan.route) {
-          setScreenState("ready");
-          appendTerminal(
-            "ok",
-            `route.ready asset=${plan.route.inputSymbol} market=${plan.route.marketName}`,
-          );
-        } else {
-          setScreenState("error");
-          const message =
-            plan.status === "no_balance"
-              ? `No idle ${params.assetSymbol} found.`
-              : `No eligible Kamino ${params.assetSymbol} market found.`;
-          setError(message);
-          appendTerminal("warn", `route.unavailable status=${plan.status}`);
-        }
+        routePlanCacheRef.current.set(cacheKey, {
+          plan,
+          fetchedAt: Date.now(),
+        });
+        applyRoutePlan(plan, params.assetSymbol);
       } catch (caught) {
         if (requestId !== loadRequestId.current) return;
+
+        if (caught instanceof ApiRequestError && caught.status === 429) {
+          const message = "Rate limited. Retrying in 5s...";
+          setError(message);
+          toast.warning(message);
+          appendTerminal("warn", `rpc.rate_limited retryMs=${RATE_LIMIT_RETRY_MS}`);
+
+          if (cached) {
+            applyRoutePlan(cached.plan, params.assetSymbol, { fromCache: true });
+            setError("Rate limited. Showing cached route while retrying in 5s...");
+          } else {
+            setScreenState("error");
+          }
+
+          if (!retryTimersRef.current.has(cacheKey)) {
+            const timer = setTimeout(() => {
+              retryTimersRef.current.delete(cacheKey);
+              void loadPortfolioAndRoute({
+                ...params,
+                force: true,
+                quiet: true,
+              });
+            }, RATE_LIMIT_RETRY_MS);
+            retryTimersRef.current.set(cacheKey, timer);
+          }
+          return;
+        }
+
         const message =
           caught instanceof Error ? caught.message : "Failed to load route";
         setError(message);
@@ -334,8 +446,15 @@ export function YieldRouteDashboard() {
         appendTerminal("error", message);
       }
     },
-    [appendTerminal],
+    [appendTerminal, applyRoutePlan],
   );
+
+  useEffect(() => {
+    return () => {
+      retryTimersRef.current.forEach((timer) => clearTimeout(timer));
+      retryTimersRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (!connected || !walletAddress) {
@@ -490,6 +609,7 @@ export function YieldRouteDashboard() {
         wallet: walletAddress,
         assetSymbol: selectedAsset,
         quiet: true,
+        force: true,
       });
     } catch (caught) {
       const message =
@@ -708,6 +828,7 @@ export function YieldRouteDashboard() {
                             wallet: walletAddress,
                             assetSymbol: selectedAsset,
                             amountUi: requestedAmount || undefined,
+                            force: true,
                           })
                         }
                       >
@@ -1004,20 +1125,15 @@ function BalanceRow({
 }
 
 function AssetIcon({ symbol }: { symbol: PortfolioAsset["symbol"] }) {
-  const palette = {
-    SOL: "from-purple-400 via-emerald-300 to-cyan-300 text-black",
-    USDC: "from-blue-400 to-blue-600 text-white",
-    USDT: "from-emerald-300 to-emerald-600 text-black",
-  }[symbol];
-
   return (
-    <div
-      className={cn(
-        "flex size-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-xs font-black",
-        palette,
-      )}
-    >
-      {symbol === "SOL" ? "S" : symbol.slice(-1)}
+    <div className="flex size-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-zinc-900 p-1 shadow-lg shadow-black/20">
+      <img
+        alt={`${symbol} logo`}
+        className="size-8 rounded-full object-contain"
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        src={TOKEN_ICONS[symbol]}
+      />
     </div>
   );
 }
@@ -1080,10 +1196,14 @@ function EmptyRoute({
   error: string | null;
   selectedAsset: DepositAssetSymbol;
 }) {
+  const rateLimited = Boolean(error?.toLowerCase().includes("rate limited"));
+
   return (
     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-6 text-center">
       <CircleAlert className="mx-auto size-10 text-solflare" />
-      <h2 className="mt-4 text-xl font-semibold">Route unavailable</h2>
+      <h2 className="mt-4 text-xl font-semibold">
+        {rateLimited ? "Rate limited" : "Route unavailable"}
+      </h2>
       <p className="mt-2 text-sm text-zinc-400">
         {error ||
           `Connect wallet and refresh portfolio to calculate a ${selectedAsset} route.`}
