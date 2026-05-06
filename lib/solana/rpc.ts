@@ -1,5 +1,10 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
+import {
   QUICKNODE_RPC_URL,
   SUPPORTED_DEPOSIT_ASSETS,
   isPlaceholderRpc,
@@ -11,12 +16,6 @@ import {
 import type { PortfolioAsset, PortfolioSnapshot } from "@/lib/types";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
-const TOKEN_PROGRAM_ID = new PublicKey(
-  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-);
-const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
-  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
-);
 
 export function createSolanaConnection(endpoint: string) {
   return new Connection(endpoint, {
@@ -74,30 +73,61 @@ async function fetchSplTokenAsset(
   asset: (typeof SUPPORTED_DEPOSIT_ASSETS)[keyof typeof SUPPORTED_DEPOSIT_ASSETS],
 ): Promise<PortfolioAsset> {
   const mint = new PublicKey(asset.mint);
-  const [associatedTokenAccount] = PublicKey.findProgramAddressSync(
-    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+  const associatedTokenAccount = getAssociatedTokenAddressSync(
+    mint,
+    owner,
+    false,
+    TOKEN_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID,
   );
-  const account = await connection.getParsedAccountInfo(
-    associatedTokenAccount,
+  const accounts = await connection.getParsedTokenAccountsByOwner(
+    owner,
+    { mint },
     "confirmed",
   );
-  let raw = 0n;
 
-  if (
-    account.value &&
-    "parsed" in account.value.data &&
-    account.value.data.parsed?.type === "account"
-  ) {
-    const parsed = account.value.data.parsed;
+  let raw = 0n;
+  let largestRaw = 0n;
+  let largestTokenAccount = associatedTokenAccount.toBase58();
+  let hasAssociatedBalance = false;
+  let nonZeroAccounts = 0;
+
+  for (const tokenAccount of accounts.value) {
+    if (!tokenAccount.account.owner.equals(TOKEN_PROGRAM_ID)) continue;
+
+    const data = tokenAccount.account.data;
+    if (!("parsed" in data) || data.parsed?.type !== "account") continue;
+
+    const parsed = data.parsed;
     const info = parsed.info;
     const accountMint = info.mint as string | undefined;
     const accountOwner = info.owner as string | undefined;
 
     if (accountMint === asset.mint && accountOwner === owner.toBase58()) {
-      raw = BigInt(info.tokenAmount.amount as string);
+      const accountRaw = BigInt(info.tokenAmount.amount as string);
+      raw += accountRaw;
+
+      if (accountRaw > 0n) {
+        nonZeroAccounts += 1;
+      }
+
+      if (tokenAccount.pubkey.equals(associatedTokenAccount) && accountRaw > 0n) {
+        hasAssociatedBalance = true;
+      }
+
+      if (accountRaw > largestRaw) {
+        largestRaw = accountRaw;
+        largestTokenAccount = tokenAccount.pubkey.toBase58();
+      }
     }
   }
+
+  const tokenAccountType =
+    nonZeroAccounts > 1 || hasAssociatedBalance
+      ? "aggregated"
+      : largestTokenAccount === associatedTokenAccount.toBase58()
+        ? "associated"
+        : "non-associated";
 
   return {
     symbol: asset.symbol,
@@ -106,8 +136,8 @@ async function fetchSplTokenAsset(
     uiAmount: Number(raw) / 10 ** asset.decimals,
     rawAmount: raw.toString(),
     source: "spl-token",
-    tokenAccount: associatedTokenAccount.toBase58(),
-    tokenAccountType: "associated",
+    tokenAccount: largestTokenAccount,
+    tokenAccountType,
   };
 }
 

@@ -10,7 +10,7 @@ export type PortfolioAsset = {
   rawAmount: string;
   source: "native" | "spl-token";
   tokenAccount?: string;
-  tokenAccountType?: "associated";
+  tokenAccountType?: "associated" | "non-associated" | "aggregated";
 };
 
 export type PortfolioSnapshot = {

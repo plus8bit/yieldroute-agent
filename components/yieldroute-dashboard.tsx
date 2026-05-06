@@ -104,6 +104,7 @@ type BuildTransactionResponse = {
   } | null;
   signOnClient: boolean;
   simulationRpcEndpoint?: string;
+  ataSyncRequired?: boolean;
 };
 
 const SOLSCAN_BASE = "https://solscan.io/tx";
@@ -603,6 +604,9 @@ export function YieldRouteDashboard() {
         "ok",
         `tx.built kind=${txPayload.transactionKind} bytes=${txPayload.messageBytes}`,
       );
+      if (txPayload.ataSyncRequired) {
+        appendTerminal("warn", "ata.sync pre-instructions injected");
+      }
 
       if (txPayload.transactionKind !== "versioned") {
         throw new Error("Client execution expects a VersionedTransaction.");
