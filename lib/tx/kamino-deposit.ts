@@ -67,6 +67,20 @@ type RebuiltDepositTransaction =
       kaminoSourceVerified: boolean;
     };
 
+type BuiltDepositTransaction =
+  | {
+      kind: "versioned";
+      transaction: VersionedTransaction;
+      rawBytes: Buffer;
+      transactionBase64: string;
+    }
+  | {
+      kind: "legacy";
+      transaction: Transaction;
+      rawBytes: Buffer;
+      transactionBase64: string;
+    };
+
 function deserializeTransaction(encodedTransaction: string) {
   const bytes = Buffer.from(encodedTransaction, "base64");
 
@@ -422,23 +436,28 @@ async function fetchKaminoDepositTransaction(params: {
   marketAddress: string;
   reserveAddress: string;
   amountUi: string;
-  sourceTokenAccount: PublicKey;
+  sourceTokenAccount?: PublicKey;
 }) {
+  const body: Record<string, string> = {
+    wallet: params.wallet,
+    market: params.marketAddress,
+    reserve: params.reserveAddress,
+    amount: params.amountUi,
+  };
+
+  if (params.sourceTokenAccount) {
+    body.sourceTokenAccount = params.sourceTokenAccount.toBase58();
+    body.userSourceLiquidity = params.sourceTokenAccount.toBase58();
+    body.userTokenAccount = params.sourceTokenAccount.toBase58();
+  }
+
   const response = await fetch(`${KAMINO_API_BASE_URL}/ktx/klend/deposit`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       accept: "application/json",
     },
-    body: JSON.stringify({
-      wallet: params.wallet,
-      market: params.marketAddress,
-      reserve: params.reserveAddress,
-      amount: params.amountUi,
-      sourceTokenAccount: params.sourceTokenAccount.toBase58(),
-      userSourceLiquidity: params.sourceTokenAccount.toBase58(),
-      userTokenAccount: params.sourceTokenAccount.toBase58(),
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -453,6 +472,36 @@ async function fetchKaminoDepositTransaction(params: {
   }
 
   return payload.transaction;
+}
+
+function buildOriginalKaminoTransaction(params: {
+  decoded: ReturnType<typeof deserializeTransaction>;
+  payer: PublicKey;
+  blockhash: string;
+}): BuiltDepositTransaction {
+  if (params.decoded.kind === "legacy") {
+    params.decoded.transaction.recentBlockhash = params.blockhash;
+    params.decoded.transaction.feePayer = params.payer;
+
+    const rawBytes = params.decoded.transaction.serialize({
+      requireAllSignatures: false,
+      verifySignatures: false,
+    });
+
+    return {
+      kind: "legacy",
+      transaction: params.decoded.transaction,
+      rawBytes,
+      transactionBase64: rawBytes.toString("base64"),
+    };
+  }
+
+  return {
+    kind: "versioned",
+    transaction: params.decoded.transaction,
+    rawBytes: params.decoded.rawBytes,
+    transactionBase64: Buffer.from(params.decoded.rawBytes).toString("base64"),
+  };
 }
 
 export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
@@ -492,6 +541,70 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
       mint: inputMint,
       amountRaw,
     });
+
+    if (input.route.inputSymbol === "USDC") {
+      if (amountRaw > resolvedTokenAccount.officialAtaBalance) {
+        throw new Error(
+          `USDC deposit amount exceeds official ATA balance. requestedRaw=${amountRaw.toString()} officialAtaBalance=${resolvedTokenAccount.officialAtaBalance.toString()}`,
+        );
+      }
+
+      const kaminoTransactionBase64 = await fetchKaminoDepositTransaction({
+        wallet: input.wallet,
+        marketAddress: input.route.marketAddress,
+        reserveAddress: input.route.reserveAddress,
+        amountUi: sanitizedAmount,
+      });
+      const decoded = deserializeTransaction(kaminoTransactionBase64);
+      const built = buildOriginalKaminoTransaction({
+        decoded,
+        payer: walletPublicKey,
+        blockhash: latestBlockhash.blockhash,
+      });
+
+      console.log("[tx/build] usdc original kamino flow", {
+        wallet: input.wallet,
+        inputSymbol: input.route.inputSymbol,
+        inputMint: input.route.inputMint,
+        market: input.route.marketAddress,
+        reserve: input.route.reserveAddress,
+        amountUi: sanitizedAmount,
+        amountRaw: amountRaw.toString(),
+        amountRawType: typeof amountRaw,
+        officialAta: resolvedTokenAccount.officialAta.toBase58(),
+        officialAtaBalance: resolvedTokenAccount.officialAtaBalance.toString(),
+        officialAtaBalanceType:
+          typeof resolvedTokenAccount.officialAtaBalance,
+        totalTokenBalance: resolvedTokenAccount.totalTokenBalance.toString(),
+        totalTokenBalanceType: typeof resolvedTokenAccount.totalTokenBalance,
+        ataSyncRequired: false,
+        kaminoSourceOverride: false,
+        rpcEndpoint: connection.rpcEndpoint,
+      });
+
+      let simulation: unknown = null;
+      if (input.simulate !== false) {
+        if (built.kind === "versioned") {
+          simulation = await connection.simulateTransaction(built.transaction, {
+            sigVerify: false,
+            replaceRecentBlockhash: true,
+          });
+        } else {
+          simulation = await connection.simulateTransaction(built.transaction);
+        }
+      }
+
+      return {
+        latestBlockhash,
+        simulation,
+        rpcEndpoint: connection.rpcEndpoint,
+        transaction: built,
+        ataSyncRequired: false,
+        kaminoSourceAccount: resolvedTokenAccount.officialAta.toBase58(),
+        kaminoSourceVerified: false,
+      };
+    }
+
     validateFundingTransfers({
       amountRaw,
       resolvedTokenAccount,

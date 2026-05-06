@@ -122,6 +122,36 @@ async function fetchSplTokenAsset(
     }
   }
 
+  if (asset.symbol === "USDC") {
+    const associatedTokenAccountRaw =
+      accounts.value
+        .map((tokenAccount) => {
+          if (!tokenAccount.pubkey.equals(associatedTokenAccount)) return 0n;
+
+          const data = tokenAccount.account.data;
+          if (!("parsed" in data) || data.parsed?.type !== "account") return 0n;
+
+          const info = data.parsed.info;
+          if (info.mint !== asset.mint || info.owner !== owner.toBase58()) {
+            return 0n;
+          }
+
+          return BigInt(info.tokenAmount.amount as string);
+        })
+        .find((accountRaw) => accountRaw > 0n) ?? 0n;
+
+    return {
+      symbol: asset.symbol,
+      mint: asset.mint,
+      decimals: asset.decimals,
+      uiAmount: Number(associatedTokenAccountRaw) / 10 ** asset.decimals,
+      rawAmount: associatedTokenAccountRaw.toString(),
+      source: "spl-token",
+      tokenAccount: associatedTokenAccount.toBase58(),
+      tokenAccountType: "associated",
+    };
+  }
+
   const tokenAccountType =
     nonZeroAccounts > 1 || hasAssociatedBalance
       ? "aggregated"
