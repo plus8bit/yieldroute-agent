@@ -13,6 +13,26 @@ import type {
 } from "@/lib/types";
 
 const MIN_ROUTE_TVL_USD = 100_000;
+const PREFERRED_STABLECOIN_MARKET = "Main Market";
+
+function rankStablecoinCandidates(markets: KaminoReserveMarket[]) {
+  return [...markets].sort((left, right) => {
+    const leftPreferred =
+      left.marketName.toLowerCase() === PREFERRED_STABLECOIN_MARKET.toLowerCase();
+    const rightPreferred =
+      right.marketName.toLowerCase() === PREFERRED_STABLECOIN_MARKET.toLowerCase();
+
+    if (leftPreferred !== rightPreferred) {
+      return leftPreferred ? -1 : 1;
+    }
+
+    if (right.supplyApyPct !== left.supplyApyPct) {
+      return right.supplyApyPct - left.supplyApyPct;
+    }
+
+    return right.totalSupplyUsd - left.totalSupplyUsd;
+  });
+}
 
 export function planUsdcDepositRoute(params: {
   wallet: string;
@@ -39,9 +59,11 @@ export function planUsdcDepositRoute(params: {
     };
   }
 
-  const candidates = params.markets
-    .filter((market) => market.totalSupplyUsd >= MIN_ROUTE_TVL_USD)
-    .filter((market) => market.maxLtv === null || market.maxLtv > 0)
+  const candidates = rankStablecoinCandidates(
+    params.markets
+      .filter((market) => market.totalSupplyUsd >= MIN_ROUTE_TVL_USD)
+      .filter((market) => market.maxLtv === null || market.maxLtv > 0),
+  )
     .slice(0, 5);
 
   const best = candidates[0];
@@ -87,7 +109,7 @@ export function planUsdcDepositRoute(params: {
     totalSupplyUsd: best.totalSupplyUsd,
     rationale: [
       `Wallet has idle ${assetSymbol}.`,
-      `Selected Kamino reserve has the highest available ${assetSymbol} supply APY after route safety filters.`,
+      `Selected Kamino ${best.marketName} reserve for the most stable USDC/USDT execution path.`,
       `Route filters out reserves below $${MIN_ROUTE_TVL_USD.toLocaleString("en-US")} TVL and reserves with maxLtv=0 to avoid closed or deposit-limited markets.`,
       "Route keeps signing client-side through Solflare; backend only returns an unsigned transaction.",
     ],
