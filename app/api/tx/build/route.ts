@@ -58,6 +58,7 @@ export async function POST(request: Request) {
           programFailureLog: failureLog,
           programLogs,
           simulationRpcEndpoint: transaction.simulationRpcEndpoint,
+          diagnostics: transaction.diagnostics,
         },
         { status: 400 },
       );

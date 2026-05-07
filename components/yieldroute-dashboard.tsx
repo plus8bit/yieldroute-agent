@@ -105,6 +105,21 @@ type BuildTransactionResponse = {
   signOnClient: boolean;
   simulationRpcEndpoint?: string;
   ataSyncRequired?: boolean;
+  diagnostics?: DepositDiagnostics;
+};
+
+type DepositDiagnostics = {
+  inputSymbol: string;
+  amountRaw: string;
+  officialAta: string;
+  officialAtaBalance: string;
+  totalTokenBalance: string;
+  ataSyncRequired: boolean;
+  ataSyncAmountRaw: string;
+  tokenAccountCount: number;
+  kaminoSourceVerified: boolean;
+  market: string;
+  reserve: string;
 };
 
 const SOLSCAN_BASE = "https://solscan.io/tx";
@@ -195,6 +210,14 @@ function getProgramLogs(error: unknown) {
   return Array.isArray(payload?.programLogs)
     ? payload.programLogs.filter((line): line is string => typeof line === "string")
     : [];
+}
+
+function getDepositDiagnostics(error: unknown) {
+  if (!(error instanceof ApiRequestError)) return null;
+  const payload = error.payload as { diagnostics?: unknown } | null;
+  const diagnostics = payload?.diagnostics;
+  if (!diagnostics || typeof diagnostics !== "object") return null;
+  return diagnostics as Partial<DepositDiagnostics>;
 }
 
 function getLastProgramFailureLog(logs: string[]) {
@@ -719,9 +742,24 @@ export function YieldRouteDashboard() {
       const message = normalizeClientError(caught);
       const programLogs = getProgramLogs(caught);
       const programFailureLog = getLastProgramFailureLog(programLogs);
+      const diagnostics = getDepositDiagnostics(caught);
       setError(message);
       setScreenState("error");
       appendTerminal("error", message);
+      if (diagnostics?.amountRaw) {
+        appendTerminal(
+          "warn",
+          `deposit.debug ${diagnostics.inputSymbol || selectedAsset} amountRaw=${diagnostics.amountRaw} officialAtaBalance=${diagnostics.officialAtaBalance || "n/a"} totalTokenBalance=${diagnostics.totalTokenBalance || "n/a"}`,
+        );
+        appendTerminal(
+          "warn",
+          `deposit.debug ataSync=${String(diagnostics.ataSyncRequired)} syncRaw=${diagnostics.ataSyncAmountRaw || "0"} tokenAccounts=${diagnostics.tokenAccountCount ?? "n/a"} sourceVerified=${String(diagnostics.kaminoSourceVerified)}`,
+        );
+        appendTerminal(
+          "warn",
+          `deposit.debug market=${shortKey(diagnostics.market || "")} reserve=${shortKey(diagnostics.reserve || "")} officialAta=${shortKey(diagnostics.officialAta || "")}`,
+        );
+      }
       if (programFailureLog) {
         appendTerminal("error", programFailureLog);
       }

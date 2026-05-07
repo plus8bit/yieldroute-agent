@@ -67,6 +67,32 @@ type RebuiltDepositTransaction =
       kaminoSourceVerified: boolean;
     };
 
+type DepositDiagnostics = {
+  wallet: string;
+  inputSymbol: string;
+  inputMint: string;
+  market: string;
+  reserve: string;
+  amountUi: string;
+  amountRaw: string;
+  officialAta: string;
+  officialAtaBalance: string;
+  totalTokenBalance: string;
+  amountRawGreaterThanOfficialAta: boolean;
+  amountRawGreaterThanTotal: boolean;
+  fundingTransfers: Array<{
+    tokenAccount: string;
+    tokenAccountBalance: string;
+    transferAmountRaw: string;
+  }>;
+  ataSyncRequired: boolean;
+  ataSyncAmountRaw: string;
+  tokenAccountCount: number;
+  kaminoSourceAccount: string;
+  kaminoSourceVerified: boolean;
+  rpcEndpoint: string;
+};
+
 function deserializeTransaction(encodedTransaction: string) {
   const bytes = Buffer.from(encodedTransaction, "base64");
 
@@ -515,7 +541,7 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
       kaminoSourceAccount: resolvedTokenAccount.officialAta,
     });
 
-    console.log("[tx/build] deposit simulation inputs", {
+    const diagnostics: DepositDiagnostics = {
       wallet: input.wallet,
       inputSymbol: input.route.inputSymbol,
       inputMint: input.route.inputMint,
@@ -523,13 +549,9 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
       reserve: input.route.reserveAddress,
       amountUi: sanitizedAmount,
       amountRaw: amountRaw.toString(),
-      amountRawType: typeof amountRaw,
       officialAta: resolvedTokenAccount.officialAta.toBase58(),
       officialAtaBalance: resolvedTokenAccount.officialAtaBalance.toString(),
-      officialAtaBalanceType:
-        typeof resolvedTokenAccount.officialAtaBalance,
       totalTokenBalance: resolvedTokenAccount.totalTokenBalance.toString(),
-      totalTokenBalanceType: typeof resolvedTokenAccount.totalTokenBalance,
       amountRawGreaterThanOfficialAta:
         amountRaw > resolvedTokenAccount.officialAtaBalance,
       amountRawGreaterThanTotal:
@@ -538,7 +560,6 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
         tokenAccount: transfer.tokenAccount.toBase58(),
         tokenAccountBalance: transfer.tokenAccountBalance.toString(),
         transferAmountRaw: transfer.transferAmountRaw.toString(),
-        transferAmountRawType: typeof transfer.transferAmountRaw,
       })),
       ataSyncRequired: preInstructions.length > 0,
       ataSyncAmountRaw: resolvedTokenAccount.syncAmountRaw.toString(),
@@ -546,6 +567,20 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
       kaminoSourceAccount: resolvedTokenAccount.officialAta.toBase58(),
       kaminoSourceVerified: rebuilt.kaminoSourceVerified,
       rpcEndpoint: connection.rpcEndpoint,
+    };
+
+    console.log("[tx/build] deposit simulation inputs", {
+      ...diagnostics,
+      amountRawType: typeof amountRaw,
+      officialAtaBalanceType:
+        typeof resolvedTokenAccount.officialAtaBalance,
+      totalTokenBalanceType: typeof resolvedTokenAccount.totalTokenBalance,
+      fundingTransfers: resolvedTokenAccount.fundingTransfers.map((transfer) => ({
+        tokenAccount: transfer.tokenAccount.toBase58(),
+        tokenAccountBalance: transfer.tokenAccountBalance.toString(),
+        transferAmountRaw: transfer.transferAmountRaw.toString(),
+        transferAmountRawType: typeof transfer.transferAmountRaw,
+      })),
     });
 
     let simulation: unknown = null;
@@ -553,6 +588,7 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
       if (rebuilt.kind === "versioned") {
         simulation = await connection.simulateTransaction(rebuilt.transaction, {
           sigVerify: false,
+          replaceRecentBlockhash: true,
         });
       } else {
         simulation = await connection.simulateTransaction(rebuilt.transaction);
@@ -567,6 +603,7 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
       ataSyncRequired: preInstructions.length > 0,
       kaminoSourceAccount: resolvedTokenAccount.officialAta.toBase58(),
       kaminoSourceVerified: rebuilt.kaminoSourceVerified,
+      diagnostics,
     };
   });
 
@@ -582,6 +619,7 @@ export async function buildKaminoDepositTransaction(input: BuildDepositInput) {
     ataSyncRequired: simulationResult.ataSyncRequired,
     kaminoSourceAccount: simulationResult.kaminoSourceAccount,
     kaminoSourceVerified: simulationResult.kaminoSourceVerified,
+    diagnostics: simulationResult.diagnostics,
     signOnClient: true,
   };
 }
