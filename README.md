@@ -1,12 +1,14 @@
 # YieldRoute Agent
 
-MVP for the Eitherway track: Solflare x Kamino x Quicknode.
+Production MVP for the Eitherway and 100xDevs Frontier tracks: Solflare x
+Kamino x Quicknode.
 
 The current version implements the data and transaction pipeline:
 
 - read wallet SOL, USDC and USDT balances through Solana RPC;
 - fetch Kamino markets and USDC/USDT reserve metrics;
 - select a deposit route for idle USDC or USDT;
+- score eligible Kamino reserves with an explainable stablecoin route policy;
 - cache client-side route plans for 60 seconds to reduce RPC pressure while switching assets;
 - build an unsigned Kamino deposit transaction for client-side Solflare signing.
 - connect Solflare and submit signed transaction bytes from the browser.
@@ -80,6 +82,8 @@ Route planner safety filters:
 
 - minimum reserve TVL: 100,000 USD;
 - exclude reserves with `maxLtv=0`;
+- prefer Kamino Main Market for reliable USDC/USDT execution before APY-only alternatives;
+- return a `decision` object with execution scores, risk levels and per-candidate notes;
 - cap deposit amount by `MAX_DEPOSIT_AMOUNT` or request override.
 
 ### POST /api/tx/build

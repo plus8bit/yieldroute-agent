@@ -45,8 +45,32 @@ export type YieldRoute = {
   reserveAddress: string;
   expectedSupplyApyPct: number;
   totalSupplyUsd: number;
+  executionScore: number;
+  executionMode: "stable-main-market" | "apy-fallback";
+  selectionReason: string;
   rationale: string[];
   warnings: string[];
+};
+
+export type RouteCandidateAnalysis = {
+  marketName: string;
+  marketAddress: string;
+  reserveAddress: string;
+  supplyApyPct: number;
+  totalSupplyUsd: number;
+  maxLtv: number | null;
+  executionScore: number;
+  riskLevel: "low" | "medium" | "elevated";
+  selected: boolean;
+  notes: string[];
+};
+
+export type RouteDecision = {
+  policy: "stablecoin-main-market-first";
+  selectedMarketName: string;
+  selectedReserveAddress: string;
+  summary: string;
+  candidates: RouteCandidateAnalysis[];
 };
 
 export type RoutePlan = {
@@ -55,4 +79,5 @@ export type RoutePlan = {
   route: YieldRoute | null;
   portfolio: PortfolioSnapshot;
   candidates: KaminoReserveMarket[];
+  decision: RouteDecision | null;
 };

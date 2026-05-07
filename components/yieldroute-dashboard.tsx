@@ -53,6 +53,7 @@ import type {
   KaminoReserveMarket,
   PortfolioAsset,
   PortfolioSnapshot,
+  RouteDecision,
   RoutePlan,
   YieldRoute,
 } from "@/lib/types";
@@ -317,6 +318,7 @@ export function YieldRouteDashboard() {
   const [portfolio, setPortfolio] = useState<PortfolioSnapshot | null>(null);
   const [route, setRoute] = useState<YieldRoute | null>(null);
   const [candidates, setCandidates] = useState<KaminoReserveMarket[]>([]);
+  const [routeDecision, setRouteDecision] = useState<RouteDecision | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
   const [activePositions, setActivePositions] = useState<ActivePosition[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -375,6 +377,7 @@ export function YieldRouteDashboard() {
       setPortfolio(plan.portfolio);
       setRoute(plan.route);
       setCandidates(plan.candidates);
+      setRouteDecision(plan.decision);
       appendTerminal(
         options.fromCache ? "info" : "ok",
         `${options.fromCache ? "cache.hit" : "portfolio.loaded"} assets=${plan.portfolio.assets.length}`,
@@ -463,6 +466,7 @@ export function YieldRouteDashboard() {
         setScreenState("loading");
         setRoute(null);
         setCandidates([]);
+        setRouteDecision(null);
       }
       setError(null);
       appendTerminal("info", `wallet.connected ${shortKey(params.wallet)}`);
@@ -501,6 +505,7 @@ export function YieldRouteDashboard() {
             setScreenState("retrying");
             setRoute(null);
             setCandidates([]);
+            setRouteDecision(null);
           }
 
           if (!retryTimersRef.current.has(cacheKey)) {
@@ -543,6 +548,7 @@ export function YieldRouteDashboard() {
       setPortfolio(null);
       setRoute(null);
       setCandidates([]);
+      setRouteDecision(null);
       setSignature(null);
       setConnectRequested(false);
       setError(null);
@@ -560,6 +566,7 @@ export function YieldRouteDashboard() {
     setSelectedAsset(assetSymbol);
     setDepositAmount("");
     setSignature(null);
+    setRouteDecision(null);
   };
 
   const handleMax = () => {
@@ -613,6 +620,7 @@ export function YieldRouteDashboard() {
       setPortfolio(plan.portfolio);
       setRoute(executionRoute);
       setCandidates(plan.candidates);
+      setRouteDecision(plan.decision);
       appendTerminal("info", "POST /api/tx/build");
 
       const txPayload = await postJson<BuildTransactionResponse>(
@@ -936,7 +944,7 @@ export function YieldRouteDashboard() {
                 <RetryingRoutePlan />
               ) : route ? (
                 <div className="flex flex-col gap-5">
-                  <div className="grid gap-3 md:grid-cols-3">
+                  <div className="grid gap-3 md:grid-cols-4">
                     <Metric label="Market" value={route.marketName} />
                     <Metric
                       highlight
@@ -947,6 +955,23 @@ export function YieldRouteDashboard() {
                       label="Available"
                       value={`${formatAmount(availableAmount, 6)} ${selectedAsset}`}
                     />
+                    <Metric
+                      highlight
+                      label="Execution Score"
+                      value={`${route.executionScore}/100`}
+                    />
+                  </div>
+
+                  <div className="rounded-lg border border-solflare/20 bg-solflare/10 p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="warning">Intent Engine</Badge>
+                      <Badge variant="outline" className="border-white/10">
+                        {route.executionMode}
+                      </Badge>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-zinc-200">
+                      {route.selectionReason}
+                    </p>
                   </div>
 
                   <div className="rounded-lg border border-white/10 bg-black/35 p-4">
@@ -1094,6 +1119,13 @@ export function YieldRouteDashboard() {
           </Card>
         ) : null}
 
+        {routeDecision ? (
+          <RouteIntelligence
+            decision={routeDecision}
+            selectedAsset={selectedAsset}
+          />
+        ) : null}
+
         <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
           <Card className="border-white/10 bg-zinc-950/75 backdrop-blur-xl">
             <CardHeader>
@@ -1224,6 +1256,111 @@ export function YieldRouteDashboard() {
         ) : null}
       </div>
     </main>
+  );
+}
+
+function RouteIntelligence({
+  decision,
+  selectedAsset,
+}: {
+  decision: RouteDecision;
+  selectedAsset: DepositAssetSymbol;
+}) {
+  return (
+    <Card className="border-white/10 bg-zinc-950/70 backdrop-blur-xl">
+      <CardHeader>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <CardTitle>Route Intelligence</CardTitle>
+            <CardDescription>
+              Deterministic policy engine for {selectedAsset} route selection.
+            </CardDescription>
+          </div>
+          <Badge variant="warning">{decision.policy}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="rounded-lg border border-solflare/20 bg-solflare/10 p-4">
+          <div className="text-sm font-semibold text-solflare">
+            Selected: {decision.selectedMarketName}
+          </div>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            {decision.summary}
+          </p>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          {decision.candidates.slice(0, 3).map((candidate) => (
+            <div
+              className={cn(
+                "rounded-lg border bg-white/[0.03] p-4",
+                candidate.selected
+                  ? "border-solflare/40 bg-solflare/10"
+                  : "border-white/10",
+              )}
+              key={`${candidate.marketAddress}-${candidate.reserveAddress}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-zinc-100">
+                    {candidate.marketName}
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-500">
+                    {shortKey(candidate.reserveAddress)}
+                  </div>
+                </div>
+                <Badge
+                  variant={
+                    candidate.riskLevel === "low"
+                      ? "success"
+                      : candidate.riskLevel === "medium"
+                        ? "outline"
+                        : "warning"
+                  }
+                >
+                  {candidate.riskLevel}
+                </Badge>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                <div className="rounded-md bg-black/30 p-3">
+                  <div className="text-zinc-500">Score</div>
+                  <div className="mt-1 font-semibold text-solflare">
+                    {candidate.executionScore}/100
+                  </div>
+                </div>
+                <div className="rounded-md bg-black/30 p-3">
+                  <div className="text-zinc-500">APY</div>
+                  <div className="mt-1 font-semibold text-zinc-100">
+                    {formatPercent(candidate.supplyApyPct)}
+                  </div>
+                </div>
+                <div className="rounded-md bg-black/30 p-3">
+                  <div className="text-zinc-500">TVL</div>
+                  <div className="mt-1 font-semibold text-zinc-100">
+                    ${formatAmount(candidate.totalSupplyUsd, 0)}
+                  </div>
+                </div>
+                <div className="rounded-md bg-black/30 p-3">
+                  <div className="text-zinc-500">Max LTV</div>
+                  <div className="mt-1 font-semibold text-zinc-100">
+                    {candidate.maxLtv === null
+                      ? "n/a"
+                      : `${formatAmount(candidate.maxLtv * 100, 0)}%`}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 flex flex-col gap-2">
+                {candidate.notes.map((note) => (
+                  <div className="text-sm leading-5 text-zinc-400" key={note}>
+                    {note}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
